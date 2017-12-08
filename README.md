@@ -112,9 +112,7 @@ M will then contain the optimal values, and the lm object will contain a bunch o
 
 You can also change the default tolerances (how small the error needs to be before exiting, but I didn't find much difference in performance.
 
-Here's the actual testbench code from nls_lm.cpp:
-
-```
+```c++
 void Fmin2Ax1M_test()
 {
   // Function for testing Fmin2x2
@@ -170,6 +168,57 @@ void Fmin2Ax1M_test()
 }
 ```
 
+## Autosurvey
+
+Setting up for Autosurvey is a bit more complex than localization.  The trick is to always keep in mind the "knowns" and "unknowns" of the optimization problem.
+
+This is easiest to explain with 3 anchor 2D autosurvey, then expanded to 4 anchor.
+
+For 3 anchor 2D Autosurvey there are 3 range equations allowing us to solve for a maximum of 3 unknowns.  There are a total of 6 coordinates [x0,y0,x1,y1,x2,y2] that are (somewhat arbitrarily) grouped into Knowns=[x0,y0,y1] and Unknowns=[x1,x2,y2].
+
+Thus for this example I assumed the location of A0 is given, the y coordinate of A1 is given, and Fmin is set up to find the x value of A1 and the relative location of A2 = (x2,y2).
+
+Note the knowns in the matrix AA and the unknowns are passed in the vector U.
+
+### Fmin3A_autosurvey
+
+```cpp
+struct Fmin3A_autosurvey // 3 anchor autosurvey 2D - 3 range equations, 3 unknowns [x1, x2, y2]
+{
+  // User enters seed Anchor Array locations and Range Measurements Rm
+  Eigen::MatrixXd AA;
+  Eigen::VectorXd Rm;
+
+  // This operator() method is called many times by LM.
+  // Note the values being constrained are in vector U.
+  // fvec is being iterativel forced to zero.
+  int operator()(const Eigen::VectorXd &U, Eigen::VectorXd &fvec) const
+  {
+    // Define 3 constraint equations with U =[x1, x2, y2] as the vector of UNKNOWNS
+    // Anchor 0 to Anchor 1 constraint (Range 0)
+    fvec(0) = pow(AA(0,0)-U(0),2) + pow(AA(0,1)-AA(1,1),2) - Rm(0)*Rm(0);
+    // Anchor 0 to Anchor 2 constraint (Range 1)
+    fvec(1) = pow(AA(0,0)-U(1),2) + pow(AA(0,1)-U(2),2)    - Rm(1)*Rm(1);
+    // Anchor 1 to Anchor 2 constraint (Range 2)
+    fvec(2) = pow(U(0)-U(1),2)    + pow(AA(1,1)-U(2),2)    - Rm(2)*Rm(2);
+
+    return 0;
+  }
+
+  // Requires U=(x1,x2,y2y) and returns computed Jacobian matrix
+  int df(const Eigen::VectorXd &U, Eigen::MatrixXd &fjac) const
+  {
+    fjac(0,0) = -2.0*(AA(0,0)-U(0));  fjac(0,1) = 0.0;                  fjac(0,2) = 0.0;
+    fjac(1,0) =  0.0;                 fjac(1,1) = -2.0*(AA(0,0)-U(1));  fjac(1,2) = -2.0*(AA(0,1)-U(2));
+    fjac(2,0) =  2.0*(U(0)-U(1));     fjac(2,1) = -2.0*(U(0)-U(1));     fjac(2,2) = -2.0*(AA(1,1)-U(2));
+    return 0;
+  }
+
+  int values() const { return 3; } // number of constraints
+};
+```
+
+Once you understand this concept of Knowns and Unknowns and realize why Fmin4A_autosurvey will have 6 equations solving for 5 unknowns, then you're in business.  
 
 ## Other thoughts
 
